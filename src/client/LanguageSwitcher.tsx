@@ -105,6 +105,7 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const [announce, setAnnounce] = useState('')
+  const [ready, setReady] = useState(false)
   const [req, setReq] = useState<RequestState>({ loaded: false, signedIn: false, counts: {}, mine: [] })
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
@@ -129,6 +130,12 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
     if (open) setAnnounce(rows.all.length ? text.results(rows.all.length) : text.noMatch)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows.all.length, open])
+
+  useEffect(() => {
+    if (!open) return setReady(false)
+    const t = setTimeout(() => setReady(true), 0)
+    return () => clearTimeout(t)
+  }, [open])
 
   const close = useCallback((returnFocus = true) => {
     setOpen(false)
@@ -307,12 +314,13 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
                 <a href={signInHref}>{text.signIn}</a>
               </p>
             ) : null}
+            {/* Inside the dialog, because aria-modal hides everything outside it. Empty at mount; text follows on the next tick so the first message is announced. */}
+            <div className="pg-sr" role="status" aria-live="polite">
+              {ready ? announce : ''}
+            </div>
           </div>
         </>
       ) : null}
-      <div className="pg-sr" role="status" aria-live="polite">
-        {open ? announce : ''}
-      </div>
     </div>
   )
 }

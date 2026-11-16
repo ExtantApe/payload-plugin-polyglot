@@ -96,9 +96,10 @@ describe('picker: combobox and listbox', () => {
     expect(onSelect).toHaveBeenCalledWith('zu')
     expect(screen.queryByRole('dialog')).toBeNull()
   })
-  it('finds Deutsch by typing German and announces the count', () => {
+  it('finds Deutsch by typing German and announces the count', async () => {
     render(<LanguageSwitcher languages={languages} current="en" />)
     open()
+    await act(async () => void (await new Promise((r) => setTimeout(r, 5))))
     fireEvent.change(box(), { target: { value: 'German' } })
     expect(names()).toEqual(['DeutschGerman'])
     expect(screen.getByRole('status').textContent).toBe('1 language found')
@@ -173,14 +174,16 @@ describe('picker: requests', () => {
 })
 
 describe('picker: screen reader details', () => {
-  it('has the live region in the page before the dialog opens, and the voted word is in the option name', async () => {
+  it('has the live region inside the dialog, empty when it mounts, and the voted word is in the option name', async () => {
     mockApi({ signedIn: true, requests: [{ language: 'wo', votes: 1 }], mine: ['wo'] })
     render(<LanguageSwitcher languages={languages} current="en" requests />)
-    const live = screen.getByRole('status')
-    expect(live.textContent).toBe('')
+    expect(screen.queryByRole('status')).toBeNull()
     open()
-    expect(screen.getByRole('status')).toBe(live)
-    await act(async () => {})
+    const inside = screen.getByRole('status')
+    expect(screen.getByRole('dialog').contains(inside)).toBe(true)
+    expect(inside.textContent).toBe('')
+    await act(async () => void (await new Promise((r) => setTimeout(r, 5))))
+    expect(inside.textContent).toBe('4 languages found')
     fireEvent.change(box(), { target: { value: 'Wolof' } })
     expect(screen.getByRole('option', { name: /Voted/ })).toBeTruthy()
   })
