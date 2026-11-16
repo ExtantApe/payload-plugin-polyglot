@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-16: language picker, requests and the notice
+
+Suite: 56 tests before, 86 after, in 8 files (`npx vitest run`; real Payload with in-memory MongoDB for votes and access, jsdom for the picker).
+
+- **Covered.** One vote per account per language (repeats, other letter case, six at once, and a direct create refused by the unique index); removal, including twice and leaving another account's vote alone; several languages per account; signed-out refused (401, nothing written); supported and unlisted languages refused (400); no create, update or delete through the API for members or staff, and an account reads only its own votes; the item source shape and that it carries no account ids; the Needs review tag shows only for flagged languages (data and picker); the Beta notice with and without the suggest link; search by English and native names, accents and case; unsupported-language list; the picker's labelled dialog, focus in and back out, Escape in two steps, Tab trap, arrow keys and Enter with `aria-activedescendant`, `aria-selected`, announcements, `lang` on names, and the vote flow.
+- **Skipped.** Layout, bottom sheet and contrast: jsdom does not evaluate the media queries or render pixels, so these need a browser and a screen reader. `Intl.DisplayNames` output differs by runtime, so tests only use names that stable ICU data has had for years. The Roadmap side is its own repo's tests.
+- **Found by the audit.** The focus trap counted the Close button, which is hidden on larger screens, as the last focusable element; it now ignores hidden controls (test added).
+
 ## 2026-11-11: `enabled` takes only an exact true
 
 Suite: 38 tests before, 47 after, in 5 files. Closes the `enabled` note under "Skipped" below.
@@ -48,7 +56,7 @@ Suite before: 11 tests in 2 files. After: 28 tests in 4 files. Every test uses f
 | Identity fields (`slug`, `path`) never change when another language is saved | "never changes the slug when another language is saved" (added) |
 | Lorem ipsum is never sent | "translates every language…" |
 | Unchanged documents cost nothing; only edited sentences are sent | "costs nothing when nothing changed…" |
-| Reviewed languages are never overwritten, and are flagged stale | "never overwrites a reviewed language…" |
+| A reviewed language is left alone while the review matches, and its mark clears when the source or text changes | "clears a review the source has moved past…", "a review goes stale" |
 | Sweep, batch API, dry run, drafts left out | "sweeps everything, through the batch API when asked" |
 | Coverage, and Translate now by collection and language | "reports coverage and translates by collection and language on request" |
 | A used-up quota stops cleanly; the next run continues | "stops cleanly when the engine quota is used up…" |

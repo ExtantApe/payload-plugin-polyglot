@@ -1,8 +1,8 @@
-import { APIError, type CollectionConfig, type CollectionSlug, type Endpoint, type FieldAccess, type PayloadRequest } from 'payload'
+import { APIError, type CollectionAfterDeleteHook, type CollectionBeforeChangeHook, type CollectionConfig, type CollectionSlug, type Endpoint, type FieldAccess, type PayloadRequest } from 'payload'
 
 import { exactlyTrue, isAdminUser } from './access.js'
 import { polyglotOf } from './translate.js'
-import type { ResolvedPolyglot } from './types.js'
+import type { CanReview, ResolvedPolyglot } from './types.js'
 
 type Doc = Record<string, unknown> | undefined
 
@@ -12,6 +12,35 @@ type Doc = Record<string, unknown> | undefined
  */
 export const mayReview = (o: Pick<ResolvedPolyglot, 'canReview'>, req: PayloadRequest, doc: Doc, locale: string): Promise<boolean> =>
   req.user ? exactlyTrue(() => (o.canReview ? o.canReview({ req, doc, locale }) : isAdminUser(req.payload, req.user))) : Promise.resolve(false)
+
+export type RoleReviewOptions = {
+  /** Roles that may review. Matched against the user's `roleField` (a string or a list of strings). */
+  roles: string[]
+  /** Where the user keeps their role or roles. Default `roles`. */
+  roleField?: string
+  /** Roles that may review every language, whatever the user's languages say. Default none. */
+  anyLanguageRoles?: string[]
+  /** A list of language codes on the user. When set, a user in `roles` may review only the languages on it. */
+  languagesField?: string
+}
+
+/**
+ * Builds a `canReview` from a roles field on the user, so a site does not hand-write it. The role names are yours;
+ * nothing is built in. A user with none of the roles, a missing field or a missing language list is refused.
+ * Pair it with a roles field that only admins can edit, or anyone could give themselves the role.
+ */
+export const canReviewByRole = (options: RoleReviewOptions): CanReview => {
+  const field = options.roleField ?? 'roles'
+  return ({ req, locale }) => {
+    const user = req.user as Record<string, unknown> | null | undefined
+    if (!user) return false
+    const held = Array.isArray(user[field]) ? (user[field] as unknown[]).map(String) : typeof user[field] === 'string' ? [user[field] as string] : []
+    if (options.anyLanguageRoles?.some((r) => held.includes(r))) return true
+    if (!options.roles.some((r) => held.includes(r))) return false
+    if (!options.languagesField) return true
+    return Array.isArray(user[options.languagesField]) && (user[options.languagesField] as unknown[]).map(String).includes(locale)
+  }
+}
 
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
 
@@ -34,6 +63,34 @@ export const reviewedAccess =
     return true
   }
 
+/**
+ * Keeps a review honest. Runs before every save that is not the plugin's own:
+ * - A new document (this covers duplicates) starts with no language reviewed.
+ * - Saving in a translated language takes that language's mark off, because its text may have changed. A mark added
+ *   in the same save stays (it already passed `canReview`).
+ * - Saving in every language at once (`locale: 'all'`) takes off every mark that was not added in the same save.
+ * Edits to the default language are handled by the sync, which clears the mark of a language whose source moved on.
+ */
+export const keepReviewsHonest =
+  (o: Pick<ResolvedPolyglot, 'statusField' | 'defaultLocale' | 'locales'>): CollectionBeforeChangeHook =>
+  ({ data, originalDoc, operation, req, context }) => {
+    if (context?.polyglot) return data
+    const group = (data?.[o.statusField] ?? {}) as { reviewed?: unknown }
+    const sent = group.reviewed === undefined ? undefined : asList(group.reviewed)
+    const before = asList((originalDoc?.[o.statusField] as { reviewed?: unknown } | undefined)?.reviewed)
+    if (operation === 'create') {
+      data[o.statusField] = { ...group, reviewed: [] }
+      return data
+    }
+    const current = sent ?? before
+    const locale = req.locale
+    if (!locale || locale === o.defaultLocale) return data
+    const next = current.filter((l) => !before.includes(l) || (locale !== 'all' && l !== locale))
+    if (next.length === current.length) return data
+    data[o.statusField] = { ...group, reviewed: next }
+    return data
+  }
+
 export const MAX_REPORT_CHARS = 500
 /** Reports one account may send in an hour. */
 export const MAX_REPORTS_PER_HOUR = 10
@@ -42,6 +99,13 @@ const accountOf = (user: unknown): string | null => {
   const u = user as { collection?: unknown; id?: unknown } | null | undefined
   return u && typeof u.collection === 'string' && (typeof u.id === 'string' || typeof u.id === 'number') ? `${u.collection}:${u.id}` : null
 }
+
+/** Removes an account's reports when the account is deleted (erasure). Runs as the system. */
+export const forgetReportsHook =
+  (slug: string): CollectionAfterDeleteHook =>
+  async ({ id, collection, req }) => {
+    await req.payload.delete({ collection: slug as CollectionSlug, where: { account: { equals: `${collection.slug}:${id}` } }, overrideAccess: true, req })
+  }
 
 /** Reviewers' locales for a read filter: the languages `canReview` allows (asked without a document). */
 const reviewableLocales = async (o: ResolvedPolyglot, req: PayloadRequest) => {
@@ -53,7 +117,8 @@ const reviewableLocales = async (o: ResolvedPolyglot, req: PayloadRequest) => {
 /**
  * Problem reports about a translation. Nobody writes it through the API: reports come in through the endpoint, which
  * acts as the signed-in account. Admins read everything; a reviewer sees the languages `canReview` allows (it is asked
- * with no document, so it must cope with that). Only admins delete.
+ * with no document, so it must cope with that) without the reporter's account. Only admins delete. Deleting the
+ * account removes its reports.
  */
 export const reportsCollection = (slug: string): CollectionConfig => ({
   slug,
@@ -75,7 +140,8 @@ export const reportsCollection = (slug: string): CollectionConfig => ({
     { name: 'doc', type: 'text', required: true, index: true },
     { name: 'locale', type: 'text', required: true, index: true },
     { name: 'message', type: 'textarea', required: true, maxLength: MAX_REPORT_CHARS },
-    { name: 'account', type: 'text', required: true, index: true },
+    // Who reported it: admins only. Reviewers get the page, the language and the message, never the reporter.
+    { name: 'account', type: 'text', required: true, index: true, access: { read: ({ req }) => Boolean(req.user) && isAdminUser(req.payload, req.user) } },
   ],
   timestamps: true,
 })

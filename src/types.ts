@@ -42,6 +42,11 @@ export class QuotaExceededError extends Error {
   }
 }
 
+/** What `canReview` is asked: the request, the page (undefined when a read filter asks) and the language. */
+export type ReviewArgs = { req: PayloadRequest; doc: Record<string, unknown> | undefined; locale: string }
+/** Decides who may mark a language reviewed. Only an exact `true` counts; anything else, an error included, is no. */
+export type CanReview = (args: ReviewArgs) => boolean | Promise<boolean>
+
 /** A recorded stop, shown to admins until a translation succeeds again. */
 export type EngineStop = { reason: StopReason; message: string; at: string }
 
@@ -85,9 +90,10 @@ export type PolyglotOptions = {
   /**
    * Who may mark a language "Reviewed by a human" (or take the mark off), per document and language. Only an exact `true`
    * counts; anything else, an error included, is no. Default: users of the admin collection only. Enforced as field-level
-   * update access. Sites can allow a translator for their assigned languages only.
+   * update access. Sites can allow a translator for their assigned languages only. The plugin has no role of its
+   * own: map your site's roles here, by hand or with `canReviewByRole`. The README shows common setups.
    */
-  canReview?: (args: { req: PayloadRequest; doc: Record<string, unknown> | undefined; locale: string }) => boolean | Promise<boolean>
+  canReview?: CanReview
   /** Let signed-in accounts report a problem with a translation. Only an exact `true` turns it on. Default off. */
   reports?: boolean
   /** Slug of the reports collection. Default `polyglot-reports`. */
@@ -98,6 +104,10 @@ export type PolyglotOptions = {
   settingsSlug?: string
   /** Admin group of the settings global. Default `Settings`. */
   settingsGroup?: string
+  /** Let visitors request and vote for languages the site does not offer yet (adds a collection and endpoints). Default false. */
+  requests?: boolean
+  /** Slug of the language requests collection. Default `polyglot-language-requests`. */
+  requestsSlug?: string
   /** Add the Polyglot admin view (coverage per collection and language, Translate now). Default true. */
   adminView?: boolean
   /** Translate after a document is published (in Next.js, after the response). Default true. */

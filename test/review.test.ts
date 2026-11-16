@@ -4,7 +4,7 @@ import { buildConfig, getPayload, type Payload, type PayloadRequest } from 'payl
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { reportEndpoint, MAX_REPORT_CHARS, MAX_REPORTS_PER_HOUR } from '../src/review.js'
-import { polyglotPlugin } from '../src/index.js'
+import { canReviewByRole, polyglotPlugin, translateDocument } from '../src/index.js'
 import type { PolyglotOptions } from '../src/types.js'
 
 const translator = { translate: async () => new Map<string, string>() }
@@ -181,5 +181,146 @@ describe('reports are off by default', () => {
     const { payload } = await build({ reports: true }, false)
     expect(payload.collections['polyglot-reports' as never]).toBeDefined()
     expect(payload.config.endpoints.some((e) => e.path === '/polyglot/reports')).toBe(true)
+  })
+})
+
+const echo = { translate: async ({ items }: { items: { key: string; text: string }[] }) => new Map(items.map((i) => [i.key, `[x] ${i.text}`])) }
+const reviewedOf = async (payload: Payload, id: string | number) =>
+  ((await payload.findByID({ collection: 'pages', id, depth: 0 })) as unknown as { translations?: { reviewed?: string[] } }).translations?.reviewed ?? []
+
+describe('create and duplicate cannot mark a page reviewed', () => {
+  let ctx: Awaited<ReturnType<typeof build>>
+  beforeAll(async () => {
+    ctx = await build({})
+  })
+  const make = (user: unknown) => ctx.payload.create({ collection: 'pages', data: { title: 'New', translations: { reviewed: ['es'] } } as never, user: user as never, overrideAccess: false })
+  it('refuses a non-admin who sends a reviewed list on create', async () => {
+    expect(await reviewedOf(ctx.payload, (await make(ctx.member)).id)).toEqual([])
+  })
+  it('starts an admin-created page with nothing reviewed', async () => {
+    expect(await reviewedOf(ctx.payload, (await make(ctx.admin)).id)).toEqual([])
+  })
+  it('starts a local-API create with nothing reviewed', async () => {
+    const page = await ctx.payload.create({ collection: 'pages', data: { title: 'Seed', translations: { reviewed: ['fr'] } } as never })
+    expect(await reviewedOf(ctx.payload, page.id)).toEqual([])
+  })
+  it('does not carry the reviewed list into a duplicate', async () => {
+    await review(ctx.payload, ctx.admin, ctx.page.id, ['es', 'fr'])
+    for (const user of [ctx.admin, ctx.member]) {
+      const copy = await ctx.payload.duplicate({ collection: 'pages', id: ctx.page.id, user: user as never, overrideAccess: false })
+      expect(await reviewedOf(ctx.payload, copy.id)).toEqual([])
+    }
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual(['es', 'fr'])
+  })
+})
+
+describe('a review goes stale', () => {
+  let ctx: Awaited<ReturnType<typeof build>>
+  beforeAll(async () => {
+    ctx = await build({ translator: echo as never })
+  })
+  const edit = (id: string | number, locale: string, data: Record<string, unknown>) => ctx.payload.update({ collection: 'pages', id, locale: locale as never, data: data as never })
+  it('clears a mark that has no fingerprint on record, and translates the language', async () => {
+    await review(ctx.payload, ctx.admin, ctx.page.id, ['es'])
+    const r = await translateDocument(ctx.payload, 'pages', String(ctx.page.id), { dryRun: true })
+    expect(r.reviewedStale).toEqual(['es'])
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual(['es'])
+    const done = await translateDocument(ctx.payload, 'pages', String(ctx.page.id))
+    expect(done.translated.sort()).toEqual(['es', 'fr'])
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual([])
+  })
+  it('keeps a mark while the source and the text are unchanged', async () => {
+    await review(ctx.payload, ctx.admin, ctx.page.id, ['es'])
+    await translateDocument(ctx.payload, 'pages', String(ctx.page.id))
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual(['es'])
+  })
+  it('keeps the mark when another language is edited', async () => {
+    await edit(ctx.page.id, 'fr', { title: 'Bonjour' })
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual(['es'])
+  })
+  it('clears the mark when that language is edited', async () => {
+    await edit(ctx.page.id, 'es', { title: 'Hola, corregido' })
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual([])
+  })
+  it('keeps a mark added in the same save as the edit', async () => {
+    await edit(ctx.page.id, 'es', { title: 'Hola, otra vez', translations: { reviewed: ['es'] } })
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual(['es'])
+  })
+  it('clears the mark when the default language changes, at the next sync', async () => {
+    await translateDocument(ctx.payload, 'pages', String(ctx.page.id))
+    await edit(ctx.page.id, 'en', { title: 'Hello, changed' })
+    await translateDocument(ctx.payload, 'pages', String(ctx.page.id))
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual([])
+  })
+  it('does not touch marks when only the default language is saved', async () => {
+    await review(ctx.payload, ctx.admin, ctx.page.id, ['fr'])
+    await edit(ctx.page.id, 'en', { title: 'Hello, changed' })
+    expect(await reviewedOf(ctx.payload, ctx.page.id)).toEqual(['fr'])
+  })
+})
+
+describe('reports: reviewers do not see the reporter', () => {
+  let ctx: Awaited<ReturnType<typeof build>>
+  const post = (user: unknown, message: string) =>
+    Promise.resolve(reportEndpoint.handler({ payload: ctx.payload, user, data: { collection: 'pages', id: ctx.page.id, locale: 'es', message }, headers: new Headers(), method: 'POST' } as unknown as PayloadRequest))
+  const read = (user: unknown, where?: Record<string, unknown>) => ctx.payload.find({ collection: 'polyglot-reports' as never, where: where as never, user: user as never, overrideAccess: false })
+  let other: { id: string | number; collection: string }
+  beforeAll(async () => {
+    ctx = await build({ reports: true, canReview: ({ req, locale }) => (req.user as { collection?: string } | null)?.collection === 'members' && locale === 'es' })
+    other = { ...(await ctx.payload.create({ collection: 'members', data: { email: 'o2@example.test', password: 'pw-made-up-4' } })), collection: 'members' }
+    await post(ctx.member, 'First note')
+    await post(other, 'Second note')
+  })
+  it('gives a reviewer the message and language but no account', async () => {
+    const { docs } = await read(ctx.member)
+    expect(docs).toHaveLength(2)
+    for (const d of docs) {
+      expect(d).not.toHaveProperty('account')
+      expect(d).toHaveProperty('message')
+    }
+    expect(JSON.stringify(docs)).not.toContain(String(ctx.member.id))
+  })
+  it('does not let a reviewer find a reporter by filtering on the account', async () => {
+    const found = await read(ctx.member, { account: { equals: `members:${other.id}` } }).then((r) => r.totalDocs, () => 0)
+    expect(found).toBe(0)
+  })
+  it('still shows admins the account', async () => {
+    const { docs } = await read(ctx.admin)
+    expect(docs.map((d) => (d as unknown as { account: string }).account).sort()).toEqual([`members:${ctx.member.id}`, `members:${other.id}`].sort())
+  })
+  it('erases the reports of a deleted account and keeps everyone else', async () => {
+    await ctx.payload.delete({ collection: 'members', id: other.id })
+    const { docs } = await read(ctx.admin)
+    expect(docs.map((d) => (d as unknown as { message: string }).message)).toEqual(['First note'])
+  })
+  it('erases reports when an account of the admin collection is deleted too', async () => {
+    const extra = { ...(await ctx.payload.create({ collection: 'users', data: { email: 'x@example.test', password: 'pw-made-up-5' } })), collection: 'users' }
+    await post(extra, 'Admin note')
+    expect((await read(ctx.admin)).totalDocs).toBe(2)
+    await ctx.payload.delete({ collection: 'users', id: extra.id })
+    expect((await read(ctx.admin)).totalDocs).toBe(1)
+  })
+})
+
+describe('canReviewByRole', () => {
+  const as = (user: unknown, locale = 'es') => canReviewByRole({ roles: ['translator'], anyLanguageRoles: ['editor-in-chief'], languagesField: 'languages' })({ req: { user } as never, doc: undefined, locale })
+  it('allows a translator for their languages only', () => {
+    expect(as({ roles: ['translator'], languages: ['es'] })).toBe(true)
+    expect(as({ roles: ['translator'], languages: ['fr'] })).toBe(false)
+    expect(as({ roles: ['translator'] })).toBe(false)
+  })
+  it('allows an any-language role, and a single string role', () => {
+    expect(as({ roles: ['editor-in-chief'] })).toBe(true)
+    expect(as({ roles: 'editor-in-chief' })).toBe(true)
+  })
+  it('refuses other roles, no roles field and no user', () => {
+    expect(as({ roles: ['editor'], languages: ['es'] })).toBe(false)
+    expect(as({ languages: ['es'] })).toBe(false)
+    expect(as(undefined)).toBe(false)
+  })
+  it('allows a role in any language when no languages field is set, and honors a custom role field', () => {
+    const f = canReviewByRole({ roles: ['t'], roleField: 'kind' })
+    expect(f({ req: { user: { kind: 't' } } as never, doc: undefined, locale: 'fr' })).toBe(true)
+    expect(f({ req: { user: { roles: ['t'] } } as never, doc: undefined, locale: 'fr' })).toBe(false)
   })
 })

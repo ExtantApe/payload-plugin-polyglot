@@ -52,6 +52,19 @@ async function saveState(payload: Payload, o: ResolvedPolyglot, collection: stri
   else await payload.create({ collection: o.stateSlug as CollectionSlug, data: data as never, overrideAccess: true })
 }
 
+/** Takes the "Reviewed by a human" mark off these languages. The plugin's own write: no hooks of ours run on it. */
+async function clearReviews(payload: Payload, o: ResolvedPolyglot, collection: string, id: string, doc: Record<string, unknown>, locales: string[]) {
+  const left = (((doc[o.statusField] as { reviewed?: string[] | null } | undefined)?.reviewed ?? []) as string[]).filter((l) => !locales.includes(l))
+  await payload.update({
+    collection: collection as CollectionSlug,
+    id,
+    locale: o.defaultLocale as never,
+    data: { [o.statusField]: { reviewed: left }, ...(doc._status ? { _status: doc._status } : {}) } as never,
+    overrideAccess: true,
+    context: { polyglot: true },
+  })
+}
+
 /** Translations known in memory for these texts in one language. */
 async function recall(payload: Payload, o: ResolvedPolyglot, locale: string, texts: string[]) {
   const known = new Map<string, string>()
@@ -107,8 +120,8 @@ export class Budget {
 /**
  * Bring one document up to date in every language (or `locales`). Unchanged
  * source costs nothing (the fingerprint matches); known sentences come from
- * memory; only new ones reach the translator. Reviewed languages are never
- * overwritten: they are marked stale. Languages are written one at a time.
+ * memory; only new ones reach the translator. A reviewed language whose source moved on, or that has no fingerprint
+ * on record, loses its reviewed mark and is translated again (the old review no longer matches). Languages are written one at a time.
  */
 export async function translateDocument(
   payload: Payload,
@@ -122,15 +135,22 @@ export async function translateDocument(
   const src = await loadSource(payload, o, collection, id)
   if (!src) return result
   const todo: string[] = []
+  const cleared: string[] = []
   for (const locale of localesOf(o, settings, opts.locales)) {
     const row = src.state.get(locale)
     if (row?.hash === src.hash) result.upToDate.push(locale)
-    else if (src.reviewed.has(locale)) {
-      result.reviewedStale.push(locale)
-      if (!opts.dryRun && row && !row.stale) await saveState(payload, o, collection, id, locale, row.hash, true, row)
-    } else todo.push(locale)
+    else {
+      // A review only counts while the fingerprint on record matches the source. A changed source, or no record at
+      // all, clears the mark (fail closed) and the language is translated again.
+      if (src.reviewed.has(locale)) {
+        result.reviewedStale.push(locale)
+        cleared.push(locale)
+      }
+      todo.push(locale)
+    }
   }
   if (opts.dryRun) return { ...result, pending: todo }
+  if (cleared.length) await clearReviews(payload, o, collection, id, src.doc, cleared)
   const unique = [...new Set(src.texts)]
   const context = { ...(o.writeContext?.({ inRequest: Boolean(opts.inRequest) }) ?? {}), polyglot: true }
   let sent = 0
