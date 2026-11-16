@@ -160,4 +160,14 @@ describe('picker: requests', () => {
     expect(screen.getByRole('status').textContent).toBe('Sign in to vote for a language.')
     expect(screen.getByRole('link', { name: 'Sign in to vote' }).getAttribute('href')).toBe('/sign-in')
   })
+
+  it('survives an odd reply from the server: the picker keeps working and treats the visitor as signed out', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ signedIn: 'yes', requests: [] }), { status: 200 })))
+    render(<LanguageSwitcher languages={languages} current="en" requests signInHref="/sign-in" />)
+    open()
+    await act(async () => {})
+    fireEvent.change(box(), { target: { value: 'Wolof' } })
+    await act(async () => void fireEvent.click(screen.getByRole('option', { name: /Wolof/ })))
+    expect(screen.getByRole('status').textContent).toBe('Sign in to vote for a language.')
+  })
 })

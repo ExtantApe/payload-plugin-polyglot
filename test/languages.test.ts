@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { knownRequestCode, languageName, requestableLanguages, searchLanguages } from '../src/languages.js'
 
@@ -35,5 +35,24 @@ describe('language search', () => {
     expect(knownRequestCode('de', ['en', 'de'])).toBeNull()
     expect(knownRequestCode('xx-not-a-language', ['en'])).toBeNull()
     expect(knownRequestCode('', ['en'])).toBeNull()
+  })
+})
+
+describe('a runtime without native-name data', () => {
+  it('falls back to the English name and says it is English, so screen readers do not read it in the wrong voice', async () => {
+    const Real = Intl.DisplayNames
+    // Stand in for a browser that has no Cornish data: asking for kw resolves to English.
+    vi.spyOn(Intl, 'DisplayNames').mockImplementation(function (locales: string | string[], opts: Intl.DisplayNamesOptions) {
+      const tag = Array.isArray(locales) ? locales[0]! : locales
+      return new Real(tag === 'kw' ? ['en'] : locales, opts)
+    } as unknown as typeof Intl.DisplayNames)
+    vi.resetModules()
+    const { languageName: fresh } = await import('../src/languages.js')
+    expect(fresh('kw')).toEqual({ code: 'kw', english: 'Cornish', native: 'Cornish', nativeLang: 'en' })
+    vi.restoreAllMocks()
+  })
+
+  it('marks a real native name with its own language', () => {
+    expect(languageName('de')).toMatchObject({ native: 'Deutsch', nativeLang: 'de' })
   })
 })

@@ -9,7 +9,9 @@
 
 Tested: 86 tests (30 new): vote uniqueness including a race and the database index, removal, several languages, signed-out refusal, no writes to another account's votes through the API, the Needs review tag, English and native name search, the picker's keys, ARIA and requests in jsdom. Real Payload with in-memory MongoDB and a fake translator.
 
-Not tested: a real browser, a phone, a screen reader, the bottom sheet layout and color contrast on a rendered page (the media queries and CSS are not evaluated in jsdom), and Roadmap itself (only the item shape is tested).
+Checked in a real browser (Chromium, desktop and a 375 px phone width, keyboard only) with made-up languages. That pass found and fixed three things: a reply missing `mine` blanked the page, so the reply is now read defensively; a browser without native-name data showed the English name marked as the other language, so it is now marked English; and the phone sheet jumped in height while typing, so it now holds 70% of the screen. Request rows now show a visible Vote or Voted label. 89 tests.
+
+Not tested: a screen reader, a real phone with its keyboard open, measured color contrast, and Roadmap itself (only the item shape is tested).
 
 ## 0.3.0 (2026-11-11)
 

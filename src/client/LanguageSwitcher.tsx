@@ -16,6 +16,8 @@ export type PickerText = {
   moreHint: string
   signIn: string
   yourVote: string
+  vote: string
+  voted: string
   noMatch: string
   votes: (n: number) => string
   results: (n: number) => string
@@ -33,6 +35,8 @@ export const DEFAULT_TEXT: PickerText = {
   moreHint: 'Type a language name to find more.',
   signIn: 'Sign in to vote',
   yourVote: 'your vote',
+  vote: 'Vote',
+  voted: 'Voted',
   noMatch: 'No languages match.',
   votes: (n) => `${n} ${n === 1 ? 'vote' : 'votes'}`,
   results: (n) => `${n} ${n === 1 ? 'language' : 'languages'} found`,
@@ -62,7 +66,7 @@ export type LanguageSwitcherProps = {
 
 type Row =
   | { kind: 'language'; id: string; code: string; native: string; english: string; lowConfidence: boolean }
-  | { kind: 'request'; id: string; code: string; native: string; english: string }
+  | { kind: 'request'; id: string; code: string; native: string; english: string; nativeLang: string }
 
 const Globe = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
@@ -112,7 +116,7 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
       requests && q
         ? searchLanguages<LanguageName>(requestableLanguages(languages.map((l) => l.code)), q)
             .slice(0, 40)
-            .map<Row>((l) => ({ kind: 'request', id: `${uid}-r-${l.code}`, code: l.code, native: l.native, english: l.english }))
+            .map<Row>((l) => ({ kind: 'request', id: `${uid}-r-${l.code}`, code: l.code, native: l.native, english: l.english, nativeLang: l.nativeLang ?? l.code }))
         : []
     return { languages: found, more, all: [...found, ...more] }
   }, [languages, q, requests, uid])
@@ -136,8 +140,12 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
     let live = true
     fetch(`${apiRoute}/polyglot/requests`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d: { signedIn: boolean; requests: { language: string; votes: number }[]; mine: string[] }) => {
-        if (live) setReq({ loaded: true, signedIn: d.signedIn, counts: Object.fromEntries(d.requests.map((x) => [x.language, x.votes])), mine: d.mine })
+      .then((d: unknown) => {
+        // Read the answer defensively: an odd reply (a proxy, an older server) must never break the picker.
+        const o = (d && typeof d === 'object' ? d : {}) as Record<string, unknown>
+        const rows = Array.isArray(o.requests) ? o.requests.filter((x): x is { language: string; votes: number } => Boolean(x) && typeof (x as { language?: unknown }).language === 'string' && typeof (x as { votes?: unknown }).votes === 'number') : []
+        const mine = Array.isArray(o.mine) ? o.mine.filter((x): x is string => typeof x === 'string') : []
+        if (live) setReq({ loaded: true, signedIn: o.signedIn === true, counts: Object.fromEntries(rows.map((x) => [x.language, x.votes])), mine })
       })
       .catch(() => live && setReq((r) => ({ ...r, loaded: true })))
     return () => {
@@ -228,14 +236,14 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
     return (
       <div key={row.id} id={row.id} role="option" aria-selected={false} aria-checked={voted} data-active={isActive} className="pg-option" onClick={() => activate(row)} onMouseMove={() => setActive(index)}>
         <span className="pg-option__names">
-          <span className="pg-option__native" lang={row.code}>
+          <span className="pg-option__native" lang={row.nativeLang}>
             {row.native}
           </span>
           {row.english !== row.native ? <span className="pg-option__english">{row.english}</span> : null}
         </span>
-        <span className="pg-votes">
-          {text.votes(n)}
-          {voted ? ` (${text.yourVote})` : ''}
+        <span className="pg-count">{text.votes(n)}</span>
+        <span className="pg-votes" aria-hidden="true">
+          {voted ? text.voted : text.vote}
         </span>
       </div>
     )
