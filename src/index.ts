@@ -5,3 +5,6 @@ export { FILLER, SKIP_KEYS, textsOf, visitPaths, visitText, fingerprint, memoryK
 export { microsoftTranslator, type MicrosoftTranslatorOptions } from './microsoft.js'
 export { QuotaExceededError, type DocumentResult, type Item, type PolyglotOptions, type ResolvedPolyglot, type TranslateArgs, type Translator } from './types.js'
 export { loadSettings, type GlossaryEntry, type Settings } from './settings.js'
+export { languageRequestsSource, requestCounts, requestEndpoints, requestsCollection, castVote, removeVote, votesOf, VoteError, type ItemSource, type SourceItem } from './requests.js'
+export { LANGUAGE_CODES, languageName, requestableLanguages, searchLanguages, type LanguageName } from './languages.js'
+export { languageList, type PickerLanguage } from './list.js'

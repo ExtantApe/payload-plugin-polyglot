@@ -88,6 +88,10 @@ export type PolyglotOptions = {
   settingsSlug?: string
   /** Admin group of the settings global. Default `Settings`. */
   settingsGroup?: string
+  /** Let visitors request and vote for languages the site does not offer yet (adds a collection and endpoints). Default false. */
+  requests?: boolean
+  /** Slug of the language requests collection. Default `polyglot-language-requests`. */
+  requestsSlug?: string
   /** Add the Polyglot admin view (coverage per collection and language, Translate now). Default true. */
   adminView?: boolean
   /** Translate after a document is published (in Next.js, after the response). Default true. */

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Language picker.** `<LanguageSwitcher>` in `/client`: a button showing the current language that opens a searchable list, a bottom sheet on phones and a popover on larger screens. Search matches English and native names ("German" finds Deutsch) using `Intl.DisplayNames`. Combobox and listbox pattern with keyboard support, screen reader names and announcements, focus management and a focus trap. Themed with `--pg-*` variables that fall back to `--palette-*`. `languageList(payload)` supplies the site's languages.
+- **Needs review tag.** A per-language setting, Languages tagged Needs review, in Translation settings. The picker tags only those languages.
+- **`<TranslationNotice>`** in `/rsc`: the Beta note on every unreviewed machine translation (with a suggest link), plus reviewed and not-yet-translated notes.
+- **Language requests** (`requests: true`, default off). Search continues into unsupported languages; signed-in accounts vote, one vote per language per account, removable, several languages allowed. New collection `polyglot-language-requests` (no writes through the API, unique key) and endpoints `GET /polyglot/requests`, `POST` and `DELETE /polyglot/requests/:language`. `languageRequestsSource()` returns the requests as items for a plugin that accepts item sources.
+
+Tested: 86 tests (30 new): vote uniqueness including a race and the database index, removal, several languages, signed-out refusal, no writes to another account's votes through the API, the Needs review tag, English and native name search, the picker's keys, ARIA and requests in jsdom. Real Payload with in-memory MongoDB and a fake translator.
+
+Not tested: a real browser, a phone, a screen reader, the bottom sheet layout and color contrast on a rendered page (the media queries and CSS are not evaluated in jsdom), and Roadmap itself (only the item shape is tested).
+
 ## 0.3.0 (2026-11-11)
 
 - **Behavior change (2026-11-11): only admin users manage translations by default.** With no `canManage`, any signed-in account of any auth collection, members included, could start translations (which can cost money), change Translation settings, and read or clear the translation memory and status. Now only users of the admin collection (`admin.user` in the Payload config) can. Sites relying on the old default must pass the option.

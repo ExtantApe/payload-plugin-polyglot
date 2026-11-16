@@ -4,6 +4,7 @@ import { FILLER, SKIP_KEYS } from './text.js'
 import { coverageEndpoint, syncEndpoint } from './endpoints.js'
 import { loadSettings, settingsGlobal } from './settings.js'
 import { included, polyglotOf, translateDocument } from './translate.js'
+import { requestEndpoints, requestsCollection } from './requests.js'
 import { mayManage, translationEnabled } from './access.js'
 import type { PolyglotOptions, ResolvedPolyglot } from './types.js'
 
@@ -113,6 +114,8 @@ export const polyglotPlugin =
       settings: options.settings ?? true,
       settingsSlug: options.settingsSlug ?? 'polyglot-settings',
       settingsGroup: options.settingsGroup ?? 'Settings',
+      requests: options.requests ?? false,
+      requestsSlug: options.requestsSlug ?? 'polyglot-language-requests',
       adminView: options.adminView ?? true,
       defaultLocale: loc.defaultLocale,
       locales: codes.filter((c) => c !== loc.defaultLocale),
@@ -160,7 +163,7 @@ export const polyglotPlugin =
     return {
       ...config,
       custom: { ...config.custom, polyglot: resolved },
-      endpoints: [...(config.endpoints ?? []), coverageEndpoint, syncEndpoint],
+      endpoints: [...(config.endpoints ?? []), coverageEndpoint, syncEndpoint, ...(resolved.requests ? requestEndpoints : [])],
       globals: resolved.settings && !(config.globals ?? []).some((g) => g.slug === resolved.settingsSlug) ? [...(config.globals ?? []), settingsGlobal(resolved, labels)] : config.globals,
       admin: resolved.adminView
         ? {
@@ -188,6 +191,7 @@ export const polyglotPlugin =
           }
         }),
         ...((config.collections ?? []).some((c) => c.slug === resolved.memorySlug) ? [] : [memoryCollection(resolved.memorySlug)]),
+        ...(resolved.requests && !(config.collections ?? []).some((c) => c.slug === resolved.requestsSlug) ? [requestsCollection(resolved.requestsSlug)] : []),
         ...((config.collections ?? []).some((c) => c.slug === resolved.stateSlug) ? [] : [stateCollection(resolved.stateSlug)]),
       ],
     }
