@@ -15,8 +15,8 @@ have, a little at a time.
   documents; a translation memory of every sentence skips known text, so an edit only sends
   the edited sentences.
 - **Never wastes calls on placeholders.** Lorem ipsum (and friends) is never sent.
-- **Respects people.** Languages marked "Reviewed by a human" are never overwritten; when the
-  source changes they are flagged as stale instead.
+- **Respects people.** Languages marked "Reviewed by a human" are left alone while the review
+  still matches; when the source changes or the text is edited, the mark comes off.
 - **Cheap or free engines.** Claude built in (Haiku by default: in our test a 24,000-character
   site into 21 languages cost $0.30, about half that through the Batch API, with quality close
   to Opus); Microsoft Translator (free tier, about 2 million characters a month) built in; bring
@@ -139,6 +139,9 @@ Show visitors what they are reading: `languageStatus(payload, collection, doc, l
 | `onStop` | | Called once when translation stops (`{ payload, stop: { reason, message, at } }`), e.g. to email admins |
 | `canManage` | admin users | Who sees the Translations view, the translation memory and status, and can Translate now. Only `true` counts: see [Access](#access) |
 | `canConfigure` | `canManage` | Who may read and change Translation settings. Only `true` counts |
+| `canReview` | admin users | Who may mark a language Reviewed by a human, per document and language. Only `true` counts: see [Who can mark a translation reviewed](#who-can-mark-a-translation-reviewed) |
+| `reports` | `false` | Let signed-in accounts report a problem with a translation. Only an exact `true` turns it on |
+| `reportsSlug` | `polyglot-reports` | Collection the reports go in |
 | `settings` | `true` | Add the Translation settings global (`settingsSlug` `polyglot-settings`, `settingsGroup` `Settings`) |
 
 ## Access
@@ -161,6 +164,94 @@ other auth collections included, so a member could start paid translations, chan
 read or clear the translation memory. Any truthy answer from `canManage` or `canConfigure` also
 counted as yes. Sites relying on the old default must pass the option, for example
 `canManage: ({ req }) => Boolean(req.user)`.
+
+## Who can mark a translation reviewed
+
+The Reviewed by a human field decides which languages are left alone, so it is protected on the
+server, as field-level update access. `canReview({ req, doc, locale })` is asked once for each language
+that a save adds or removes. Every one must answer exactly `true`; if any does not, the whole change to
+that field is dropped and the stored list stays as it was. Saving the page with the list unchanged is
+always fine. A throw, a rejection or any other answer is a no, and so is a request with no signed-in user.
+With no `canReview`, only users of the admin collection can. The plugin's own runs use the local API
+without access checks and are not affected. No endpoint of the plugin sets this field.
+
+A site where translators have assigned languages (here, a `languages` list on the translator's account):
+
+```ts
+polyglotPlugin({
+  // ...
+  canReview: ({ req, locale }) =>
+    req.user?.collection === 'translators' && Array.isArray(req.user.languages) && req.user.languages.includes(locale),
+})
+```
+
+This replaces the default, so add your admins to the check if they should still review. The same function
+decides who reads reports (below). It is asked with no `doc` there, so write it to cope with that.
+
+A review does not outlive the text it was about. A new page, and so a duplicate, starts with nothing
+reviewed. Editing a language takes its mark off unless the same save adds it again. At the next sync, a
+reviewed language whose source (the default language) changed, or that has no fingerprint on record,
+loses its mark and is translated again. Keep Payload versions on if you want the old text back.
+
+### Setting up a translator role
+
+Polyglot has no role of its own. You decide who a translator is; `canReview` and `canReviewByRole`
+(both typed, `CanReview` and `ReviewArgs` are exported) connect that to the field. Whatever you use,
+keep the field that holds roles editable by admins only, or people could give themselves the role.
+
+**A roles field on your users.** Add `roles` (and, to give each translator languages, `languages`):
+
+```ts
+import { canReviewByRole, polyglotPlugin } from '@extantape/payload-plugin-polyglot'
+
+const adminOnly = ({ req }) => req.user?.roles?.includes('admin') === true
+
+// in your users collection
+fields: [
+  { name: 'roles', type: 'select', hasMany: true, options: ['admin', 'translator'], defaultValue: [], access: { create: adminOnly, update: adminOnly } },
+  { name: 'languages', type: 'select', hasMany: true, options: ['es', 'fr'], access: { create: adminOnly, update: adminOnly } },
+]
+
+// in the plugin
+polyglotPlugin({
+  // ...
+  canReview: canReviewByRole({ roles: ['translator'], anyLanguageRoles: ['admin'], languagesField: 'languages' }),
+})
+```
+
+A translator can then mark only the languages on their account; an admin can mark any. Leave out
+`languagesField` to let every translator review every language. If your roles field has another name,
+pass `roleField`. It can hold one string or a list.
+
+**An access-control or permissions plugin.** Most of these give each user a role and let you ask
+"may this user do X?". Register one permission, say `polyglot.review`, and call the plugin's check from
+`canReview`. The shape is the same in each:
+
+```ts
+canReview: async ({ req, locale }) => {
+  if (!req.user) return false
+  // Replace with your plugin's own check. It must give back exactly `true`.
+  return (await userCan(req, 'polyglot.review', { language: locale })) === true
+}
+```
+
+Where the plugin keeps permissions per role in the database, create a Translator role there with that
+permission and give it to your translators; where it takes them in config, add the permission to a
+translator role in the config. Per-language limits go through whatever scope or condition the plugin
+supports, or through a `languages` field as above. If the check can reject or throw, that is a no.
+
+Reports are shown to reviewers without the reporter's account, so a translator sees the page, the
+language and the message only.
+
+## Reporting a problem with a translation
+
+With `reports: true`, `POST /api/polyglot/reports` takes `{ collection, id, locale, message }` from a
+signed-in account of any auth collection. The collection must be one the plugin translates, the language
+one of the site's, the page must exist, and the message is trimmed and capped at 500 characters. One
+account can send 10 reports an hour (429 after that). Reports go in `polyglot-reports`: nobody writes to
+it through the API, users of the admin collection read and delete everything, and anyone `canReview`
+allows reads the reports for the languages it allows, without the account of the person who sent them
+(only the admin collection sees that). Deleting an account deletes the reports it sent. Reporting a problem does not mark anything reviewed.
 
 ## License
 

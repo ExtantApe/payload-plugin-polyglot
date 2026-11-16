@@ -4,6 +4,7 @@ import { FILLER, SKIP_KEYS } from './text.js'
 import { coverageEndpoint, syncEndpoint } from './endpoints.js'
 import { loadSettings, settingsGlobal } from './settings.js'
 import { included, polyglotOf, translateDocument } from './translate.js'
+import { forgetReportsHook, keepReviewsHonest, reportEndpoint, reportsCollection, reviewedAccess } from './review.js'
 import { requestEndpoints, requestsCollection, forgetVotesHook } from './requests.js'
 import { mayManage, translationEnabled } from './access.js'
 import type { PolyglotOptions, ResolvedPolyglot } from './types.js'
@@ -77,7 +78,7 @@ const memoryCollection = (slug: string): CollectionConfig => ({
  * - A fingerprint of each document's text skips unchanged documents; a memory of
  *   every sentence skips known text, so edits only pay for what changed.
  * - Placeholder copy (lorem ipsum) is never sent; languages marked "Reviewed by a
- *   human" are never overwritten (they are flagged when the source changes).
+ *   human" are left alone until the source changes or the text is edited, which clears the mark).
  * - Identity fields (slug, path…) never change when another language is saved.
  * - Translation settings (a global) let admins pause translation, skip languages,
  *   add never-translate terms, notes and a glossary, and see characters sent.
@@ -110,6 +111,9 @@ export const polyglotPlugin =
       onPublish: options.onPublish ?? true,
       canManage: options.canManage,
       canConfigure: options.canConfigure,
+      canReview: options.canReview,
+      reports: options.reports === true,
+      reportsSlug: options.reportsSlug ?? 'polyglot-reports',
       onStop: options.onStop,
       settings: options.settings ?? true,
       settingsSlug: options.settingsSlug ?? 'polyglot-settings',
@@ -154,7 +158,8 @@ export const polyglotPlugin =
           type: 'select',
           hasMany: true,
           options: labels,
-          admin: { description: 'Reviewed languages are never re-translated automatically.' },
+          access: { create: reviewedAccess(resolved.statusField), update: reviewedAccess(resolved.statusField) },
+          admin: { description: 'Reviewed languages are left alone until the source or the text changes, which clears the mark.' },
         },
       ],
     }
@@ -163,7 +168,7 @@ export const polyglotPlugin =
     return {
       ...config,
       custom: { ...config.custom, polyglot: resolved },
-      endpoints: [...(config.endpoints ?? []), coverageEndpoint, syncEndpoint, ...(resolved.requests ? requestEndpoints : [])],
+      endpoints: [...(config.endpoints ?? []), coverageEndpoint, syncEndpoint, ...(resolved.requests ? requestEndpoints : []), ...(resolved.reports ? [reportEndpoint] : [])],
       globals: resolved.settings && !(config.globals ?? []).some((g) => g.slug === resolved.settingsSlug) ? [...(config.globals ?? []), settingsGlobal(resolved, labels)] : config.globals,
       admin: resolved.adminView
         ? {
@@ -180,7 +185,10 @@ export const polyglotPlugin =
         ...(config.collections ?? []).map((c) => {
           const targets = resolved.collections[c.slug]
           // A deleted account takes its votes with it (erasure). Every auth collection, since any account can vote.
-          const forgetVotes = resolved.requests && c.auth && c.slug !== resolved.requestsSlug ? [forgetVotesHook(resolved.requestsSlug)] : []
+          const forgetVotes = [
+            ...(resolved.requests && c.auth && c.slug !== resolved.requestsSlug ? [forgetVotesHook(resolved.requestsSlug)] : []),
+            ...(resolved.reports && c.auth && c.slug !== resolved.reportsSlug ? [forgetReportsHook(resolved.reportsSlug)] : []),
+          ]
           if (!targets && !forgetVotes.length) return c
           if (!targets) return { ...c, hooks: { ...c.hooks, afterDelete: [...(c.hooks?.afterDelete ?? []), ...forgetVotes] } }
           return {
@@ -188,13 +196,14 @@ export const polyglotPlugin =
             fields: [...localizeFields(c.fields, new Set(targets)), statusField],
             hooks: {
               ...c.hooks,
-              beforeChange: [...(c.hooks?.beforeChange ?? []), keepIdentity],
+              beforeChange: [...(c.hooks?.beforeChange ?? []), keepIdentity, keepReviewsHonest(resolved)],
               afterChange: [...(c.hooks?.afterChange ?? []), onPublish],
               afterDelete: [...(c.hooks?.afterDelete ?? []), ...forgetVotes],
             },
           }
         }),
         ...((config.collections ?? []).some((c) => c.slug === resolved.memorySlug) ? [] : [memoryCollection(resolved.memorySlug)]),
+        ...(resolved.reports && !(config.collections ?? []).some((c) => c.slug === resolved.reportsSlug) ? [reportsCollection(resolved.reportsSlug)] : []),
         ...(resolved.requests && !(config.collections ?? []).some((c) => c.slug === resolved.requestsSlug) ? [requestsCollection(resolved.requestsSlug)] : []),
         ...((config.collections ?? []).some((c) => c.slug === resolved.stateSlug) ? [] : [stateCollection(resolved.stateSlug)]),
       ],

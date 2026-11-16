@@ -56,7 +56,7 @@ Suite before: 11 tests in 2 files. After: 28 tests in 4 files. Every test uses f
 | Identity fields (`slug`, `path`) never change when another language is saved | "never changes the slug when another language is saved" (added) |
 | Lorem ipsum is never sent | "translates every language…" |
 | Unchanged documents cost nothing; only edited sentences are sent | "costs nothing when nothing changed…" |
-| Reviewed languages are never overwritten, and are flagged stale | "never overwrites a reviewed language…" |
+| A reviewed language is left alone while the review matches, and its mark clears when the source or text changes | "clears a review the source has moved past…", "a review goes stale" |
 | Sweep, batch API, dry run, drafts left out | "sweeps everything, through the batch API when asked" |
 | Coverage, and Translate now by collection and language | "reports coverage and translates by collection and language on request" |
 | A used-up quota stops cleanly; the next run continues | "stops cleanly when the engine quota is used up…" |

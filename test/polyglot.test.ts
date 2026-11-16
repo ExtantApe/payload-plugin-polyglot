@@ -138,15 +138,19 @@ describe('polyglot', () => {
     expect((await read(id, 'fr')).title).toBe('[fr] Hello there')
   })
 
-  it('never overwrites a reviewed language; marks it stale instead', async () => {
+  it('clears a review the source has moved past, and translates that language again', async () => {
     await payload.update({ collection: 'pages' as never, id, locale: 'es' as never, data: { title: 'Hola (revisado)' } as never })
     const en = await read(id, 'en')
     await payload.update({ collection: 'pages' as never, id, locale: 'en' as never, data: { translations: { ...en.translations, reviewed: ['es'] } } as never })
     await payload.update({ collection: 'pages' as never, id, locale: 'en' as never, data: { title: 'Hello again', _status: 'published' } as never })
-    const r = await translateDocument(payload, 'pages', id)
-    expect(r).toMatchObject({ translated: ['fr'], reviewedStale: ['es'] })
-    expect((await read(id, 'es')).title).toBe('Hola (revisado)')
-    expect(await languageStatus(payload, 'pages', await read(id, 'en'), 'es')).toBe('stale')
+    const r = await translateDocument(payload, 'pages', id, { dryRun: true })
+    expect(r).toMatchObject({ reviewedStale: ['es'] })
+    expect((await read(id, 'en')).translations.reviewed).toEqual(['es'])
+    const done = await translateDocument(payload, 'pages', id)
+    expect(done).toMatchObject({ translated: ['es', 'fr'], reviewedStale: ['es'] })
+    expect((await read(id, 'es')).title).toBe('[es] Hello again')
+    expect((await read(id, 'en')).translations.reviewed).toEqual([])
+    expect(await languageStatus(payload, 'pages', await read(id, 'en'), 'es')).toBe('machine')
   })
 
   it('sweeps everything, through the batch API when asked', async () => {

@@ -42,6 +42,11 @@ export class QuotaExceededError extends Error {
   }
 }
 
+/** What `canReview` is asked: the request, the page (undefined when a read filter asks) and the language. */
+export type ReviewArgs = { req: PayloadRequest; doc: Record<string, unknown> | undefined; locale: string }
+/** Decides who may mark a language reviewed. Only an exact `true` counts; anything else, an error included, is no. */
+export type CanReview = (args: ReviewArgs) => boolean | Promise<boolean>
+
 /** A recorded stop, shown to admins until a translation succeeds again. */
 export type EngineStop = { reason: StopReason; message: string; at: string }
 
@@ -82,6 +87,17 @@ export type PolyglotOptions = {
   canManage?: (args: { req: PayloadRequest }) => boolean | Promise<boolean>
   /** Who may read and change Translation settings (pause, languages, glossary…). Only `true` counts. Default: `canManage`. */
   canConfigure?: (args: { req: PayloadRequest }) => boolean | Promise<boolean>
+  /**
+   * Who may mark a language "Reviewed by a human" (or take the mark off), per document and language. Only an exact `true`
+   * counts; anything else, an error included, is no. Default: users of the admin collection only. Enforced as field-level
+   * update access. Sites can allow a translator for their assigned languages only. The plugin has no role of its
+   * own: map your site's roles here, by hand or with `canReviewByRole`. The README shows common setups.
+   */
+  canReview?: CanReview
+  /** Let signed-in accounts report a problem with a translation. Only an exact `true` turns it on. Default off. */
+  reports?: boolean
+  /** Slug of the reports collection. Default `polyglot-reports`. */
+  reportsSlug?: string
   /** Add the Translation settings global (admin-editable pause, skipped languages, glossary, usage). Default true. */
   settings?: boolean
   /** Slug of the settings global. Default `polyglot-settings`. */
@@ -100,7 +116,7 @@ export type PolyglotOptions = {
   onStop?: (args: { payload: Payload; stop: EngineStop }) => void | Promise<void>
 }
 
-export type ResolvedPolyglot = Required<Omit<PolyglotOptions, 'enabled' | 'include' | 'writeContext' | 'describe' | 'translatorFor' | 'maxCharactersPerRun' | 'canManage' | 'canConfigure' | 'onStop'>> &
-  Pick<PolyglotOptions, 'enabled' | 'include' | 'writeContext' | 'describe' | 'translatorFor' | 'maxCharactersPerRun' | 'canManage' | 'canConfigure' | 'onStop'> & { defaultLocale: string; locales: string[] }
+export type ResolvedPolyglot = Required<Omit<PolyglotOptions, 'enabled' | 'include' | 'writeContext' | 'describe' | 'translatorFor' | 'maxCharactersPerRun' | 'canManage' | 'canConfigure' | 'canReview' | 'onStop'>> &
+  Pick<PolyglotOptions, 'enabled' | 'include' | 'writeContext' | 'describe' | 'translatorFor' | 'maxCharactersPerRun' | 'canManage' | 'canConfigure' | 'canReview' | 'onStop'> & { defaultLocale: string; locales: string[] }
 
 export type DocumentResult = { translated: string[]; upToDate: string[]; reviewedStale: string[]; failed: string[]; pending: string[] }
