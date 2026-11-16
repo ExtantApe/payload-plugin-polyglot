@@ -4,6 +4,8 @@ Keeps all your [Payload](https://payloadcms.com) 3 content translated into every
 have, a little at a time.
 
 > **Beta (0.x).** Used on a live site. Feedback and issues welcome.
+>
+> **Language picker, requests and notice (unreleased).** Tested with Vitest: real Payload with in-memory MongoDB for votes, access and the settings, and jsdom for the picker's keyboard and ARIA behavior. It has not been seen in a real browser, on a phone, or with a screen reader yet.
 
 - **Finds your content.** List the fields to translate per collection; they become per-language
   (Payload localization). Slugs, paths, relationships and images stay shared.
@@ -41,6 +43,27 @@ have, a little at a time.
 **Works with:** nothing designed yet. It translates the fields you list in any collection, including collections other plugins add, as long as it comes last in `plugins`.
 
 **Family.** Polyglot is in the Locale family, with Places, which is named but not built yet. Locale is marked to be split, so its members and name will change, and all the families are a working draft.
+
+## The language picker
+
+`<LanguageSwitcher>` (from `@extantape/payload-plugin-polyglot/client`) is a button showing the current language. It opens a bottom sheet on phones and a popover on larger screens, with a search box and a list of your languages, each in its own name with the English name under it. Typing `German` finds Deutsch and typing `Zulu` finds isiZulu. Names come from the browser's `Intl.DisplayNames`, which carries Unicode CLDR data (Unicode License v3), so no name table ships with the plugin. It is a combobox with a listbox: focus stays in the search box, the arrow keys move, Enter chooses, Escape clears the search and then closes. The colors come from `--pg-*` variables that fall back to `--palette-*` theme tokens, so a theme restyles it. All of its text can be replaced with the `text` prop.
+
+```tsx
+// Server component
+import { languageList } from '@extantape/payload-plugin-polyglot'
+const languages = await languageList(payload)
+
+// Client component
+<LanguageSwitcher languages={languages} current={locale} hrefFor={(code) => `/${code}`} requests apiRoute="/api" signInHref="/sign-in" />
+```
+
+- **Needs review tag.** The list has no labels except a Needs review tag on languages staff pick under Translation settings, Languages tagged Needs review. Use it for machine translations you are unsure about.
+- **Beta notice.** `<TranslationNotice>` (from `/rsc`) shows the Beta note on every machine translation a person has not reviewed, whatever the tag says. It also says when a language is reviewed or a page is not translated yet.
+- **Requests.** With `requests: true`, the search continues into every other language the browser can name. Signed-in accounts (any auth collection) vote for a language, one vote per language per account, any number of languages, and take a vote back. Signed-out visitors can read counts and are sent to sign in. Votes live in the `polyglot-language-requests` collection. Nobody creates or edits a vote through the API; staff (the same rule as `canManage`: admin users by default) read all of it and can delete a vote, and an account reads only its own. Deleting an account in any auth collection deletes its votes too. Only an exact `true` turns requests on. Counts are cached for 30 seconds per server. A unique key on language and account keeps a vote single even if two requests race. Default off.
+- **Limits.** The only limit is one vote per account per language, so a site with open sign-up can have votes stuffed cheaply; staff can delete votes in the admin. Voting and un-voting are cookie-authenticated POST and DELETE calls, so they rely on your Payload `csrf` setting and SameSite cookies.
+- **With Roadmap.** `languageRequestsSource()` returns the requests as items (`lang:zu`, title, vote count) for a plugin that takes item sources. Polyglot does not need one.
+
+Limits: the list is about 190 languages and regional variants, from a fixed list of codes. A language the browser has no name for is not offered. The picker needs JavaScript.
 
 ## Install
 

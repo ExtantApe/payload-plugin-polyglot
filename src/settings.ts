@@ -10,6 +10,8 @@ export type GlossaryEntry = { locale: string; term: string; translation: string 
 export type Settings = {
   paused: boolean
   skipLocales: Set<string>
+  /** Languages staff marked low confidence: the picker tags them Needs review. */
+  lowConfidence: Set<string>
   keep: string[]
   instructions?: string
   glossary: GlossaryEntry[]
@@ -19,7 +21,7 @@ export type Settings = {
   stop?: EngineStop
 }
 
-const DEFAULTS: Settings = { paused: false, skipLocales: new Set(), keep: [], glossary: [], usage: [] }
+const DEFAULTS: Settings = { paused: false, skipLocales: new Set(), lowConfidence: new Set(), keep: [], glossary: [], usage: [] }
 const month = () => new Date().toISOString().slice(0, 7)
 const hasGlobal = (payload: Payload, slug: string) => payload.config.globals?.some((g) => g.slug === slug)
 
@@ -46,6 +48,14 @@ export function settingsGlobal(o: ResolvedPolyglot, labels: { label: string; val
         hasMany: true,
         options: labels,
         admin: { description: 'Visitors see the default language there until someone translates by hand. Existing translations stay.' },
+      },
+      {
+        name: 'lowConfidence',
+        label: 'Languages tagged Needs review',
+        type: 'select',
+        hasMany: true,
+        options: labels,
+        admin: { description: 'Machine translations we are unsure about. The language picker shows a Needs review tag on these only. The Beta notice on unreviewed pages stays on every machine translation.' },
       },
       {
         name: 'keep',
@@ -123,11 +133,12 @@ export function settingsGlobal(o: ResolvedPolyglot, labels: { label: string; val
 
 /** Current settings (defaults when the settings global is off). */
 export async function loadSettings(payload: Payload, o: ResolvedPolyglot): Promise<Settings> {
-  if (!hasGlobal(payload, o.settingsSlug)) return { ...DEFAULTS, skipLocales: new Set() }
+  if (!hasGlobal(payload, o.settingsSlug)) return { ...DEFAULTS, skipLocales: new Set(), lowConfidence: new Set() }
   const g = (await payload.findGlobal({ slug: o.settingsSlug as never, depth: 0, overrideAccess: true })) as Record<string, unknown>
   return {
     paused: Boolean(g.paused),
     skipLocales: new Set((g.skipLocales as string[] | null) ?? []),
+    lowConfidence: new Set((g.lowConfidence as string[] | null) ?? []),
     keep: String(g.keep ?? '')
       .split('\n')
       .map((t) => t.trim())
