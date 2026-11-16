@@ -116,6 +116,9 @@ Show visitors what they are reading: `languageStatus(payload, collection, doc, l
 | `onStop` | | Called once when translation stops (`{ payload, stop: { reason, message, at } }`), e.g. to email admins |
 | `canManage` | admin users | Who sees the Translations view, the translation memory and status, and can Translate now. Only `true` counts: see [Access](#access) |
 | `canConfigure` | `canManage` | Who may read and change Translation settings. Only `true` counts |
+| `canReview` | admin users | Who may mark a language Reviewed by a human, per document and language. Only `true` counts: see [Who can mark a translation reviewed](#who-can-mark-a-translation-reviewed) |
+| `reports` | `false` | Let signed-in accounts report a problem with a translation. Only an exact `true` turns it on |
+| `reportsSlug` | `polyglot-reports` | Collection the reports go in |
 | `settings` | `true` | Add the Translation settings global (`settingsSlug` `polyglot-settings`, `settingsGroup` `Settings`) |
 
 ## Access
@@ -138,6 +141,38 @@ other auth collections included, so a member could start paid translations, chan
 read or clear the translation memory. Any truthy answer from `canManage` or `canConfigure` also
 counted as yes. Sites relying on the old default must pass the option, for example
 `canManage: ({ req }) => Boolean(req.user)`.
+
+## Who can mark a translation reviewed
+
+The Reviewed by a human field decides which languages are never re-translated, so it is protected on the
+server, as field-level update access. `canReview({ req, doc, locale })` is asked once for each language
+that a save adds or removes. Every one must answer exactly `true`; if any does not, the whole change to
+that field is dropped and the stored list stays as it was. Saving the page with the list unchanged is
+always fine. A throw, a rejection or any other answer is a no, and so is a request with no signed-in user.
+With no `canReview`, only users of the admin collection can. The plugin's own runs use the local API
+without access checks and are not affected. No endpoint of the plugin sets this field.
+
+A site where translators have assigned languages (here, a `languages` list on the translator's account):
+
+```ts
+polyglotPlugin({
+  // ...
+  canReview: ({ req, locale }) =>
+    req.user?.collection === 'translators' && Array.isArray(req.user.languages) && req.user.languages.includes(locale),
+})
+```
+
+This replaces the default, so add your admins to the check if they should still review. The same function
+decides who reads reports (below). It is asked with no `doc` there, so write it to cope with that.
+
+## Reporting a problem with a translation
+
+With `reports: true`, `POST /api/polyglot/reports` takes `{ collection, id, locale, message }` from a
+signed-in account of any auth collection. The collection must be one the plugin translates, the language
+one of the site's, the page must exist, and the message is trimmed and capped at 500 characters. One
+account can send 10 reports an hour (429 after that). Reports go in `polyglot-reports`: nobody writes to
+it through the API, users of the admin collection read and delete everything, and anyone `canReview`
+allows reads the reports for the languages it allows. Reporting a problem does not mark anything reviewed.
 
 ## License
 

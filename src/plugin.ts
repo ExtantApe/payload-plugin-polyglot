@@ -4,6 +4,7 @@ import { FILLER, SKIP_KEYS } from './text.js'
 import { coverageEndpoint, syncEndpoint } from './endpoints.js'
 import { loadSettings, settingsGlobal } from './settings.js'
 import { included, polyglotOf, translateDocument } from './translate.js'
+import { reportEndpoint, reportsCollection, reviewedAccess } from './review.js'
 import { mayManage, translationEnabled } from './access.js'
 import type { PolyglotOptions, ResolvedPolyglot } from './types.js'
 
@@ -109,6 +110,9 @@ export const polyglotPlugin =
       onPublish: options.onPublish ?? true,
       canManage: options.canManage,
       canConfigure: options.canConfigure,
+      canReview: options.canReview,
+      reports: options.reports === true,
+      reportsSlug: options.reportsSlug ?? 'polyglot-reports',
       onStop: options.onStop,
       settings: options.settings ?? true,
       settingsSlug: options.settingsSlug ?? 'polyglot-settings',
@@ -151,6 +155,7 @@ export const polyglotPlugin =
           type: 'select',
           hasMany: true,
           options: labels,
+          access: { update: reviewedAccess(resolved.statusField) },
           admin: { description: 'Reviewed languages are never re-translated automatically.' },
         },
       ],
@@ -160,7 +165,7 @@ export const polyglotPlugin =
     return {
       ...config,
       custom: { ...config.custom, polyglot: resolved },
-      endpoints: [...(config.endpoints ?? []), coverageEndpoint, syncEndpoint],
+      endpoints: [...(config.endpoints ?? []), coverageEndpoint, syncEndpoint, ...(resolved.reports ? [reportEndpoint] : [])],
       globals: resolved.settings && !(config.globals ?? []).some((g) => g.slug === resolved.settingsSlug) ? [...(config.globals ?? []), settingsGlobal(resolved, labels)] : config.globals,
       admin: resolved.adminView
         ? {
@@ -188,6 +193,7 @@ export const polyglotPlugin =
           }
         }),
         ...((config.collections ?? []).some((c) => c.slug === resolved.memorySlug) ? [] : [memoryCollection(resolved.memorySlug)]),
+        ...(resolved.reports && !(config.collections ?? []).some((c) => c.slug === resolved.reportsSlug) ? [reportsCollection(resolved.reportsSlug)] : []),
         ...((config.collections ?? []).some((c) => c.slug === resolved.stateSlug) ? [] : [stateCollection(resolved.stateSlug)]),
       ],
     }
