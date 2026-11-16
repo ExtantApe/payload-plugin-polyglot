@@ -4,7 +4,7 @@ import { FILLER, SKIP_KEYS } from './text.js'
 import { coverageEndpoint, syncEndpoint } from './endpoints.js'
 import { loadSettings, settingsGlobal } from './settings.js'
 import { included, polyglotOf, translateDocument } from './translate.js'
-import { requestEndpoints, requestsCollection } from './requests.js'
+import { requestEndpoints, requestsCollection, forgetVotesHook } from './requests.js'
 import { mayManage, translationEnabled } from './access.js'
 import type { PolyglotOptions, ResolvedPolyglot } from './types.js'
 
@@ -114,7 +114,7 @@ export const polyglotPlugin =
       settings: options.settings ?? true,
       settingsSlug: options.settingsSlug ?? 'polyglot-settings',
       settingsGroup: options.settingsGroup ?? 'Settings',
-      requests: options.requests ?? false,
+      requests: options.requests === true,
       requestsSlug: options.requestsSlug ?? 'polyglot-language-requests',
       adminView: options.adminView ?? true,
       defaultLocale: loc.defaultLocale,
@@ -179,7 +179,10 @@ export const polyglotPlugin =
       collections: [
         ...(config.collections ?? []).map((c) => {
           const targets = resolved.collections[c.slug]
-          if (!targets) return c
+          // A deleted account takes its votes with it (erasure). Every auth collection, since any account can vote.
+          const forgetVotes = resolved.requests && c.auth && c.slug !== resolved.requestsSlug ? [forgetVotesHook(resolved.requestsSlug)] : []
+          if (!targets && !forgetVotes.length) return c
+          if (!targets) return { ...c, hooks: { ...c.hooks, afterDelete: [...(c.hooks?.afterDelete ?? []), ...forgetVotes] } }
           return {
             ...c,
             fields: [...localizeFields(c.fields, new Set(targets)), statusField],
@@ -187,6 +190,7 @@ export const polyglotPlugin =
               ...c.hooks,
               beforeChange: [...(c.hooks?.beforeChange ?? []), keepIdentity],
               afterChange: [...(c.hooks?.afterChange ?? []), onPublish],
+              afterDelete: [...(c.hooks?.afterDelete ?? []), ...forgetVotes],
             },
           }
         }),

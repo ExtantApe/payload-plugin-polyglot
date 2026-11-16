@@ -1,4 +1,4 @@
-import { APIError, type CollectionConfig, type CollectionSlug, type Endpoint, type Payload, type PayloadRequest } from 'payload'
+import { APIError, type CollectionAfterDeleteHook, type CollectionConfig, type CollectionSlug, type Endpoint, type Payload, type PayloadRequest } from 'payload'
 
 import { mayManage } from './access.js'
 import { knownRequestCode, languageName } from './languages.js'
@@ -12,8 +12,8 @@ const accountOf = (user: unknown): string | null => {
 const voteKey = (language: string, account: string) => `${language}|${account}`
 
 /**
- * Language requests: one record per account and language. Nobody writes it through the API (create, update and
- * delete are closed); votes go through the endpoints below, which act as the signed-in account. The unique `key`
+ * Language requests: one record per account and language. Nobody writes it through the API (create and update are
+ * closed, delete is for managers); votes go through the endpoints below, which act as the signed-in account. The unique `key`
  * (language and account) is the guard that keeps a vote single even when two requests race.
  */
 export const requestsCollection = (slug: string): CollectionConfig => ({
@@ -25,7 +25,8 @@ export const requestsCollection = (slug: string): CollectionConfig => ({
     read: async ({ req }) => (!req.user ? false : (await mayManage(polyglotOf(req.payload), req)) ? true : { account: { equals: accountOf(req.user) ?? '' } }),
     create: () => false,
     update: () => false,
-    delete: () => false,
+    // Managers (the same rule as the plugin's other admin access) can remove a vote, for ballot stuffing or erasure.
+    delete: ({ req }) => Boolean(req.user) && mayManage(polyglotOf(req.payload), req),
   },
   fields: [
     { name: 'language', type: 'text', required: true, index: true },
@@ -37,8 +38,28 @@ export const requestsCollection = (slug: string): CollectionConfig => ({
 
 const slugOf = (payload: Payload) => polyglotOf(payload).requestsSlug as CollectionSlug
 
+/** Removes an account's votes when the account is deleted. Runs as the system; the account is the deleted document. */
+export const forgetVotesHook =
+  (slug: string): CollectionAfterDeleteHook =>
+  async ({ id, collection, req }) => {
+    await req.payload.delete({ collection: slug as CollectionSlug, where: { account: { equals: `${collection.slug}:${id}` } }, overrideAccess: true, req })
+    countCache.delete(req.payload)
+  }
+
+/** Counts are cached for a short time, so opening the picker does not read every vote. Any change here clears it. */
+const COUNT_TTL_MS = 30_000
+const countCache = new WeakMap<Payload, { at: number; rows: { language: string; votes: number }[] }>()
+
 /** Counts of votes per language, most votes first. */
 export async function requestCounts(payload: Payload): Promise<{ language: string; votes: number }[]> {
+  const hit = countCache.get(payload)
+  if (hit && Date.now() - hit.at < COUNT_TTL_MS) return hit.rows.map((r) => ({ ...r }))
+  const rows = await countVotes(payload)
+  countCache.set(payload, { at: Date.now(), rows })
+  return rows.map((r) => ({ ...r }))
+}
+
+async function countVotes(payload: Payload): Promise<{ language: string; votes: number }[]> {
   const { docs } = await payload.find({ collection: slugOf(payload), pagination: false, depth: 0, overrideAccess: true, select: { language: true } as never })
   const counts = new Map<string, number>()
   for (const d of docs as unknown as { language: string }[]) counts.set(d.language, (counts.get(d.language) ?? 0) + 1)
@@ -82,6 +103,7 @@ export async function castVote(payload: Payload, user: unknown, language: string
   if (existing.docs.length) return { language: code, added: false }
   try {
     await payload.create({ collection, data: { language: code, account, key } as never, overrideAccess: true })
+    countCache.delete(payload)
     return { language: code, added: true }
   } catch (err) {
     // Lost a race: the unique key refused the second record, so the vote already exists.
@@ -97,6 +119,7 @@ export async function removeVote(payload: Payload, user: unknown, language: stri
   if (!account) throw new VoteError('Sign in to vote.', 401)
   const code = requestable(payload, language)
   const res = await payload.delete({ collection: slugOf(payload), where: { key: { equals: voteKey(code, account) } }, overrideAccess: true })
+  countCache.delete(payload)
   return { language: code, removed: res.docs.length > 0 }
 }
 
@@ -104,7 +127,8 @@ const fail = (err: unknown): never => {
   if (err instanceof VoteError) throw new APIError(err.message, err.status, undefined, true)
   throw err
 }
-const languageParam = (req: PayloadRequest) => decodeURIComponent(String((req.routeParams as { language?: unknown } | undefined)?.language ?? ''))
+/** Payload has already decoded the route parameter; a stray `%` stays as text and is refused as not on the list. */
+const languageParam = (req: PayloadRequest) => String((req.routeParams as { language?: unknown } | undefined)?.language ?? '')
 
 /** GET /api/polyglot/requests, POST and DELETE /api/polyglot/requests/:language. */
 export const requestEndpoints: Endpoint[] = [

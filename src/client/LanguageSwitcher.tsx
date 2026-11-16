@@ -85,6 +85,9 @@ const Check = () => (
   </svg>
 )
 
+/** The name is in the language's own words, unless the runtime had no native name and it fell back to English. */
+const langOf = (native: string, english: string, code: string) => (native === english && code !== 'en' ? 'en' : code)
+
 type RequestState = { loaded: boolean; signedIn: boolean; counts: Record<string, number>; mine: string[] }
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled])'
 
@@ -221,7 +224,7 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
       return (
         <div key={row.id} id={row.id} role="option" aria-selected={isCurrent} data-active={isActive} data-current={isCurrent} className="pg-option" onClick={() => activate(row)} onMouseMove={() => setActive(index)}>
           <span className="pg-option__names">
-            <span className="pg-option__native" lang={row.code}>
+            <span className="pg-option__native" lang={langOf(row.native, row.english, row.code)}>
               {row.native}
             </span>
             {row.english !== row.native ? <span className="pg-option__english">{row.english}</span> : null}
@@ -242,7 +245,7 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
           {row.english !== row.native ? <span className="pg-option__english">{row.english}</span> : null}
         </span>
         <span className="pg-count">{text.votes(n)}</span>
-        <span className="pg-votes" aria-hidden="true">
+        <span className="pg-votes">
           {voted ? text.voted : text.vote}
         </span>
       </div>
@@ -255,7 +258,7 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
       <button ref={trigger} type="button" className="pg-trigger" aria-haspopup="dialog" aria-expanded={open} onClick={() => (open ? close() : setOpen(true))}>
         <Globe />
         <span className="pg-sr">{text.label}: </span>
-        <span lang={current}>{label}</span>
+        <span lang={langOf(label, currentLanguage?.english ?? languageName(current)?.english ?? label, current)}>{label}</span>
         <Chevron />
       </button>
       {open ? (
@@ -304,12 +307,12 @@ export function LanguageSwitcher({ languages, current, onSelect, hrefFor, reques
                 <a href={signInHref}>{text.signIn}</a>
               </p>
             ) : null}
-            <div className="pg-sr" role="status" aria-live="polite">
-              {announce}
-            </div>
           </div>
         </>
       ) : null}
+      <div className="pg-sr" role="status" aria-live="polite">
+        {open ? announce : ''}
+      </div>
     </div>
   )
 }

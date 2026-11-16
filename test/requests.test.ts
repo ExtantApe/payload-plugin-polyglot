@@ -104,12 +104,12 @@ describe('language votes', () => {
 })
 
 describe('nobody edits another account\'s vote through the API', () => {
-  it('closes create, update and delete for members and staff alike', async () => {
+  it('closes create and update for everyone, and delete for non-staff', async () => {
     const doc = (await payload.find({ collection: SLUG as never, where: { account: { equals: `members:${ben.id}` } }, limit: 1, overrideAccess: true })).docs[0]!
     for (const user of [ann, ben, staff]) {
       const opts = { user, overrideAccess: false } as never
       await expect(payload.update({ collection: SLUG as never, id: doc.id, data: { account: `members:${ann.id}` } as never, ...(opts as object) })).rejects.toThrow()
-      await expect(payload.delete({ collection: SLUG as never, id: doc.id, ...(opts as object) })).rejects.toThrow()
+      if (user !== staff) await expect(payload.delete({ collection: SLUG as never, id: doc.id, ...(opts as object) })).rejects.toThrow()
       await expect(payload.create({ collection: SLUG as never, data: { language: 'it', account: `members:${ann.id}`, key: 'x' } as never, ...(opts as object) })).rejects.toThrow()
     }
     expect(await votesOf(payload, ben)).toContain('fr')
@@ -118,6 +118,46 @@ describe('nobody edits another account\'s vote through the API', () => {
     const asUser = async (user: U) => (await payload.find({ collection: SLUG as never, user: { ...user } as never, overrideAccess: false, pagination: false })).docs as unknown as { account: string }[]
     expect((await asUser(ann)).every((d) => d.account === `members:${ann.id}`)).toBe(true)
     expect((await asUser(staff)).some((d) => d.account === `members:${ben.id}`)).toBe(true)
+  })
+})
+
+describe('removing votes', () => {
+  it('lets staff delete a vote, and refuses accounts that are not staff', async () => {
+    await castVote(payload, ben, 'wo')
+    const doc = (await payload.find({ collection: SLUG as never, where: { key: { equals: `wo|members:${ben.id}` } }, limit: 1, overrideAccess: true })).docs[0]!
+    await expect(payload.delete({ collection: SLUG as never, id: doc.id, user: { ...ann } as never, overrideAccess: false })).rejects.toThrow()
+    await expect(payload.delete({ collection: SLUG as never, id: doc.id, user: { ...ben } as never, overrideAccess: false })).rejects.toThrow()
+    expect(await votesOf(payload, ben)).toContain('wo')
+    await payload.delete({ collection: SLUG as never, id: doc.id, user: { ...staff } as never, overrideAccess: false })
+    expect(await votesOf(payload, ben)).not.toContain('wo')
+    expect((await requestCounts(payload)).find((r) => r.language === 'wo')).toBeUndefined()
+  })
+  it('refuses a signed-out request to delete', async () => {
+    await castVote(payload, ben, 'wo')
+    const doc = (await payload.find({ collection: SLUG as never, where: { key: { equals: `wo|members:${ben.id}` } }, limit: 1, overrideAccess: true })).docs[0]!
+    await expect(payload.delete({ collection: SLUG as never, id: doc.id, overrideAccess: false })).rejects.toThrow()
+    expect(await votesOf(payload, ben)).toContain('wo')
+  })
+  it('removes an account\'s votes when the account is deleted, and only that account\'s', async () => {
+    const cy = await payload.create({ collection: 'members', data: { email: 'cy@example.com', password: 'made-up-password-1' } as never })
+    const gone = { id: String(cy.id), collection: 'members' }
+    await castVote(payload, gone, 'it')
+    await castVote(payload, gone, 'fr')
+    await castVote(payload, ben, 'it')
+    await payload.delete({ collection: 'members', id: cy.id, overrideAccess: true })
+    expect(await votesOf(payload, gone)).toEqual([])
+    expect(await votesOf(payload, ben)).toContain('it')
+    expect((await requestCounts(payload)).find((r) => r.language === 'it')?.votes).toBe(1)
+  })
+  it('answers a stray percent sign with 400, not a crash', async () => {
+    expect(await status(handler('post')(reqFor(ann, '%')) as Promise<unknown>)).toBe(400)
+  })
+  it('serves counts from a short cache that every vote clears', async () => {
+    const before = (await requestCounts(payload)).find((r) => r.language === 'sv')?.votes ?? 0
+    await castVote(payload, ann, 'sv')
+    expect((await requestCounts(payload)).find((r) => r.language === 'sv')?.votes).toBe(before + 1)
+    await removeVote(payload, ann, 'sv')
+    expect((await requestCounts(payload)).find((r) => r.language === 'sv')?.votes ?? 0).toBe(before)
   })
 })
 

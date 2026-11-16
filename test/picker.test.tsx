@@ -171,3 +171,23 @@ describe('picker: requests', () => {
     expect(screen.getByRole('status').textContent).toBe('Sign in to vote for a language.')
   })
 })
+
+describe('picker: screen reader details', () => {
+  it('has the live region in the page before the dialog opens, and the voted word is in the option name', async () => {
+    mockApi({ signedIn: true, requests: [{ language: 'wo', votes: 1 }], mine: ['wo'] })
+    render(<LanguageSwitcher languages={languages} current="en" requests />)
+    const live = screen.getByRole('status')
+    expect(live.textContent).toBe('')
+    open()
+    expect(screen.getByRole('status')).toBe(live)
+    await act(async () => {})
+    fireEvent.change(box(), { target: { value: 'Wolof' } })
+    expect(screen.getByRole('option', { name: /Voted/ })).toBeTruthy()
+  })
+  it('marks a name as English when it is the English fallback', () => {
+    render(<LanguageSwitcher languages={[...languages, { code: 'fr', native: 'French', english: 'French', lowConfidence: false }]} current="en" />)
+    open()
+    expect(screen.getByText('French').getAttribute('lang')).toBe('en')
+    expect(screen.getByText('Deutsch').getAttribute('lang')).toBe('de')
+  })
+})
